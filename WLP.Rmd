@@ -1,0 +1,176 @@
+---
+title: "Distinguishing correct vs incorrect execution of weight lift exercises"
+output: html_document
+---
+
+```{r globaloptions, echo=FALSE}
+library(knitr)
+
+# Set global knitr options
+opts_chunk$set(echo=TRUE,message=FALSE,warning=FALSE)
+```
+
+## Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect
+a large amount of data about personal activity relatively inexpensively. These type of
+devices are part of the quantified self movement – a group of enthusiasts who take
+measurements about themselves regularly to improve their health, to find patterns in
+their behavior, or because they are tech geeks. One thing that people regularly do is
+quantify how *much* of a particular activity they do, but they rarely quantify how
+*well* they do it.
+
+The data for this project were collected from accelerometers on the belt, forearm, arm,
+and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to use the collected
+data to distinguish between the 5 types of execution of the exercises.
+
+Two models were fit to the data, viz. a Random Forest and a Boosting model.
+It was found that the Random Forest model was superior to the Boosting model
+with an out of sample error of 1% vs 6% for the Boosting model.
+
+## Data loading
+
+The data used in this project are described on this website 
+[http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) 
+(see the section on the Weight Lifting Exercise Dataset).
+
+The training data were downloaded from the course website. While loading the data
+the strings "", "NA" and "#DIV/0!" are marked as NA's
+
+```{r download}
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+# Read training data
+training <- read.csv(url(url_train),na.strings=c("","NA","#DIV/0!"))
+
+# Size of the data set
+dim(training)
+```
+
+Note that the training data has 19622 rows and 160 columns.
+
+## Selection of predictors
+
+### Data cleaning
+
+Some exploratory data analysis showed that the columns with statistics of measurement, i.e.
+columns with "kurtosis", "skewness", "max", "min", "amplitude", "var", "avg" or "stddev"
+in their name, contained nearly only NA's. Only rows with "new_windows"
+equal to "yes" had some non-NA values for the columns with statistics. As the number of
+rows with "new_window=yes" was rather low (406 of the 19622 rows), it was decided
+to remove all colums with statistics from the training data set.
+Also the columns with the index 'X', 'user_name', timestamps and 'windows' information (columns 1-7)
+were removed from the training data set, as they have no impact on the classification of the
+weight lift exercise.
+
+```{r removeStatistics}
+# remove all statistics columns and index 'X', user_name, 'timestamp' and 'window' columns (1-7)
+stat_cols <- grep("kurtosis|skewness|max|min|amplitude|var|avg|stddev",names(training))
+stat_cols <- c(1:7,stat_cols)
+training <- training[,-stat_cols]
+
+dim(training)
+```
+
+By this data cleaning exercise the number of variables is reduced to 52, 13 for each of
+the positions of the sensors (belt, arm, dumbbell and forearm).
+
+### Predictor selection
+
+A closer look at the 13 variables for each position of the sensors, shows that the they can
+be divided into two groups, viz.:  
+
+  1. variables labelled with 'roll', 'pitch', 'yaw' and 'total_accel'
+  2. the remaining 9 variables which are lower level and directional
+  
+The variables in the first group are derived from the lower level ones in the second
+group.
+
+For building the prediction model only the variables in the first group are
+used as predictors, because it is expected that the variables in the second
+group are redundant. For this purpose the training set is further reduced.
+
+```{r predictors}
+# Select columns with 'roll', 'pitch', 'yaw' and 'total_accel' in their name
+col_drv <- grep("roll|pitch|yaw|total",names(training))
+# Make sure to also include the classifier column 'classe', column 53
+training <- training[,c(col_drv,53)]
+
+dim(training)
+```
+With the above the number of predictors is reduced to 16.
+
+## Data partitioning / validation set
+
+The training set loaded earlier is split into a set for training the prediction model
+and a validation set to test the model and to estimate the out of sample error.
+
+```{r datasplit}
+# Load caret library
+library(caret)
+# SPlit data into training and validation sets
+set.seed(1234)
+inTrain <- createDataPartition(y=training$classe,p=0.7,list=FALSE)
+train <- training[inTrain,]
+valid <- training[-inTrain,]
+```
+
+## Model building
+
+Two models were built, one using Random Forest and another using Boosting. For
+the tuning of the models k-fold cross-validation was implemented with k = 5.
+
+```{r kfold}
+# set-up k-fold cross validation, k = 5
+kfold <- trainControl( method ="cv", number=5)
+```
+
+### Random forest model
+
+Below the Random Forest model is set-up with 5-fold cross-validation. An 
+in-sample accuracy of around 99% is reported for the optimal model.
+
+```{r RandomForest, cache=TRUE}
+# make Random Forest model
+set.seed(5432)
+modRF <- train(classe~.,data=train,method="rf", trControl=kfold)
+print(modRF)
+```
+
+### Boosting model
+
+Below the Boosting model is set-up with 5-fold cross-validation. An in-sample 
+accuracy of around 93% is reported for the optimal model.
+
+```{r Boosting, cache=TRUE}
+# make Boosting model
+set.seed(8725)
+modGBM <- train(classe~.,data=train,method="gbm", trControl=kfold, verbose=FALSE)
+print(modGBM)
+```
+
+## Model validation / Out of sample error
+
+To estimate the out of sample error confusion matrices were calculated for
+the two fitted models using the validation set that was defined earlier.
+The results are shown below. The following out-of sample errors were found:
+
+  * Random forest model: **1%**
+  
+  * Boosting model: **6%**
+  
+Conclusion is that the random forest model is more accurate than the boosting
+model (at a 95% confidence level)
+
+### Random forest model
+
+```{r validRF}
+# Calculate confusion Matrix for validation set
+confusionMatrix(predict(modRF,valid),valid$classe)
+```
+
+### Boosting model
+
+```{r validBoost}
+# Calculate confusion Matrix for validation set
+confusionMatrix(predict(modGBM,valid),valid$classe)
+```
